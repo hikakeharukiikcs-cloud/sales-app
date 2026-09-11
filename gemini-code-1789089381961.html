@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>得意先別訪問日記＆売上管理</title>
+  <style>
+    :root {
+      --primary-color: #007aff;
+      --bg-color: #f2f2f7;
+      --card-bg: #ffffff;
+      --border-color: #c6c6c8;
+      --text-color: #000000;
+      --sub-text: #8e8e93;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: var(--bg-color); color: var(--text-color); padding-bottom: 70px; }
+    
+    /* ヘッダー・ナビゲーション */
+    header { background: var(--card-bg); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 100; padding: 10px 16px; text-align: center; font-weight: bold; }
+    nav { position: fixed; bottom: 0; width: 100%; background: var(--card-bg); border-top: 1px solid var(--border-color); display: flex; justify-content: space-around; z-index: 100; }
+    nav button { flex: 1; padding: 12px 0; border: none; background: none; font-size: 12px; color: var(--sub-text); cursor: pointer; }
+    nav button.active { color: var(--primary-color); font-weight: bold; }
+
+    /* コンテナ */
+    .container { padding: 16px; max-width: 800px; margin: 0 auto; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* フォームエレメント */
+    .card { background: var(--card-bg); border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .form-group { margin-bottom: 14px; position: relative; }
+    label { display: block; font-size: 13px; color: var(--sub-text); margin-bottom: 4px; }
+    input[type="text"], input[type="date"], textarea, select { width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 16px; background: #fff; }
+    textarea { resize: vertical; min-height: 80px; line-height: 1.4; }
+    button.btn-primary { width: 100%; padding: 12px; background: var(--primary-color); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; }
+    
+    /* インクリメンタル検索ドロップダウン */
+    .suggest-box { position: absolute; width: 100%; max-height: 200px; overflow-y: auto; background: white; border: 1px solid var(--border-color); border-radius: 8px; z-index: 50; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .suggest-item { padding: 10px; border-bottom: 1px solid #f0f0f0; cursor: pointer; font-size: 14px; }
+    .suggest-item:hover { background-color: #f0f0f8; }
+
+    /* 日記・履歴リスト */
+    .log-item { background: var(--card-bg); border-radius: 10px; padding: 14px; margin-bottom: 12px; border-left: 4px solid var(--primary-color); }
+    .log-header { display: flex; justify-content: space-between; font-size: 12px; color: var(--sub-text); margin-bottom: 6px; }
+    .log-title { font-weight: bold; font-size: 16px; margin-bottom: 6px; }
+    .log-content { font-size: 14px; white-space: pre-wrap; margin-bottom: 8px; }
+    .log-action { font-size: 13px; background: #eef6ff; padding: 8px; border-radius: 6px; white-space: pre-wrap; }
+    .elapsed-badge { display: inline-block; background: #ff9500; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; margin-bottom: 10px; }
+    
+    /* 同期設定表示 */
+    .sync-status { font-size: 12px; text-align: center; padding: 6px; color: var(--sub-text); }
+  </style>
+</head>
+<body>
+
+  <header id="header-title">訪問日記の入力</header>
+
+  <div class="container">
+    <!-- データ同期状態ステータス -->
+    <div class="sync-status" id="sync-status">ローカル保存モード (Firebase未接続)</div>
+
+    <!-- TAB 1: 日記入力 -->
+    <div id="tab-input" class="tab-content active">
+      <div class="card">
+        <form id="diary-form">
+          <div class="form-group">
+            <label>訪問日付</label>
+            <input type="date" id="visit-date" required>
+          </div>
+          <div class="form-group">
+            <label>得意先（コード・枝番・名称で検索）</label>
+            <input type="text" id="customer-search" placeholder="文字を入力して絞り込み..." autocomplete="off">
+            <input type="hidden" id="selected-customer-id">
+            <div id="suggest-box" class="suggest-box"></div>
+          </div>
+          <div class="form-group">
+            <label>商談内容・会話詳細</label>
+            <textarea id="visit-details" placeholder="会話や商談の詳細を記入"></textarea>
+          </div>
+          <div class="form-group">
+            <label>次回アクション・宿題</label>
+            <textarea id="next-action" placeholder="次回の日程や宿題事項"></textarea>
+          </div>
+          <button type="submit" class="btn-primary">訪問日記を保存</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- TAB 2: 得意先別履歴 -->
+    <div id="tab-history" class="tab-content">
+      <div class="card">
+        <div class="form-group">
+          <label>得意先を選択</label>
+          <input type="text" id="history-customer-search" placeholder="得意先を検索..." autocomplete="off">
+          <input type="hidden" id="history-customer-id">
+          <div id="history-suggest-box" class="suggest-box"></div>
+        </div>
+      </div>
+      <div id="customer-summary"></div>
+      <div id="customer-log-list"></div>
+    </div>
+
+    <!-- TAB 3: 全体タイムライン -->
+    <div id="tab-timeline" class="tab-content">
+      <div id="timeline-list"></div>
+    </div>
+
+    <!-- TAB 4: 設定・得意先・データ連携 -->
+    <div id="tab-settings" class="tab-content">
+      <div class="card">
+        <h3>得意先マスター追加</h3>
+        <form id="master-form" style="margin-top: 10px;">
+          <div class="form-group"><label>得意先コード</label><input type="text" id="m-code" required></div>
+          <div class="form-group"><label>得意先枝番</label><input type="text" id="m-branch" value="0" required></div>
+          <div class="form-group"><label>得意先名</label><input type="text" id="m-name" required></div>
+          <div class="form-group"><label>住所</label><input type="text" id="m-address"></div>
+          <button type="submit" class="btn-primary">得意先を追加</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>売上データ (CSV) 取り込み</h3>
+        <p style="font-size: 12px; color: var(--sub-text); margin-bottom: 8px;">未登録の「得意先コード+枝番」は自動登録されます。</p>
+        <input type="file" id="csv-file" accept=".csv">
+      </div>
+
+      <div class="card">
+        <h3>クラウド同期 (Firebase) 設定</h3>
+        <p style="font-size: 12px; color: var(--sub-text); margin-bottom: 8px;">PCとiPhoneで同期する場合は設定情報を貼り付けてください。</p>
+        <textarea id="firebase-config-json" placeholder='{"apiKey": "...", "authDomain": "...", ...}'></textarea>
+        <button id="save-firebase-config" class="btn-primary" style="margin-top: 8px;">Firebase設定を保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 下部ナビゲーションバー -->
+  <nav>
+    <button onclick="switchTab('input')" id="nav-input" class="active">日記入力</button>
+    <button onclick="switchTab('history')" id="nav-history">得意先別履歴</button>
+    <button onclick="switchTab('timeline')" id="nav-timeline">全体ログ</button>
+    <button onclick="switchTab('settings')" id="nav-settings">設定・マスター</button>
+  </nav>
+
+  <!-- Firebase SDK (同期機能用) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+  <script>
+    // 初期得意先マスターデータ（指示書より取り込み済み）
+    const initialCustomers = [
+      { code: "0", branch: "13", name: "IKCS株式会社東京支社 CF", address: "東京都品川区上大崎3-1--1JR東急目黒ビル15F" },
+      { code: "0", branch: "23", name: "IKCS株式会社東京支社 KF", address: "東京都品川区上大崎3-1--1JR東急目黒ビル15F" },
+      { code: "0", branch: "33", name: "IKCS株式会社東京支社 MK", address: "東京都品川区上大崎3-1--1JR東急目黒ビル15F" },
+      { code: "0", branch: "43", name: "IKCS株式会社 事業推進 東京", address: "東京都品川区上大崎3-1--1JR東急目黒ビル15F" },
+      { code: "10", branch: "0", name: "泉株式会社東京フィルム課", address: "東京都品川区上大崎3丁目1-1JR東急目黒ビル15階" },
+      { code: "10", branch: "24", name: "泉株式会社 工業繊維部門 東京産業資材部", address: "東京都品川区上大崎3-1--1JR東急目黒ビル15F" },
+      { code: "10", branch: "8", name: "泉株式会社産業資材課", address: "大阪府大阪市北区中之島3-3-3" },
+      { code: "10000000", branch: "0", name: "グーゲン株式会社", address: "埼玉県三郷市三郷2-11-5グリーンパーク三郷902" },
+      { code: "10520", branch: "0", name: "株式会社エコー", address: "山形県酒田市両羽町325-1" },
+      { code: "11110", branch: "0", name: "株式会社エフ", address: "東京都新宿区早稲田鶴巻町531-5OKADOビルB1F" },
+      { code: "11130", branch: "0", name: "エフイートレード株式会社", address: "神奈川県藤沢市藤沢462日本生命藤沢駅前ビル3F" },
+      { code: "1120", branch: "0", name: "株式会社FNC", address: "東京都港区赤坂2-14-13シャトレ赤坂3階" },
+      { code: "11390", branch: "0", name: "有限会社エム・ファクトリー", address: "山梨県中巨摩郡昭和町押越2438" },
+      { code: "11690", branch: "0", name: "株式会社エムズ", address: "神奈川県大和市鶴間1-30-8" },
+      { code: "11710", branch: "0", name: "有限会社エムズ・ワークス", address: "東京都調布市佐須町2-1-2" },
+      { code: "11980", branch: "0", name: "エルディ有限会社", address: "東京都町田市成瀬台4-27-13" },
+      { code: "12050", branch: "0", name: "株式会社エンドープラスチック", address: "埼玉県入間郡三芳町竹間沢440-1" },
+      { code: "12410", branch: "0", name: "オートガーデン(高木慶一様)", address: "千葉県香取郡小見川町野田693" },
+      { code: "12490", branch: "17", name: "オートグラス株式会社 仙台営業所", address: "宮城県仙台市若林区卸町東3-2-31" },
+      { code: "12490", branch: "18", name: "オートグラス株式会社 青森営業所", address: "青森県青森市本町3-1-5" },
+      { code: "12490", branch: "19", name: "オートグラス株式会社札幌営業所", address: "北海道札幌市白石区平和通7丁目北7-1" },
+      { code: "12490", branch: "23", name: "オートグラス株式会社栃木営業所", address: "栃木県栃木市岩舟町静3479河島運輸(株)岩舟倉庫内" },
+      { code: "12490", branch: "24", name: "オートグラス株式会社新潟営業所", address: "新潟県新潟市中央区紫竹山1-10-22" },
+      { code: "12490", branch: "27", name: "オートグラス株式会社千葉営業所", address: "千葉県千葉市稲毛区長沼原町237-1" },
+      { code: "12490", branch: "31", name: "オートグラス株式会社松本営業所", address: "長野県松本市市場1-66" },
+      { code: "12490", branch: "34", name: "オートグラス株式会社 横浜営業所", address: "神奈川県横浜市都筑区川向町922-18" },
+      { code: "13470", branch: "0", name: "株式会社オダギリ", address: "東京都台東区寿2-5-7" },
+      { code: "13820", branch: "0", name: "株式会社オルフィックデザイン", address: "神奈川県横浜市金沢区東朝比奈2-2-35サニークレスト湘南八景2-104" },
+      { code: "14060", branch: "0", name: "株式会社カーグラス・JP さいたま中央店", address: "埼玉県さいたま市中央区下落合4-1-20" },
+      { code: "14960", branch: "0", name: "カービューティープロユアサ(小倉敏昭様)", address: "和歌山県有田郡湯浅町湯浅2170" },
+      { code: "15090", branch: "0", name: "カービューティーメーク岩野(岩野和弘様)", address: "千葉県市原市姉崎2411-1" },
+      { code: "15440", branch: "0", name: "株式会社カーフロント", address: "福島県いわき市鹿島町米田字南内5-2" },
+      { code: "1560", branch: "0", name: "株式会社JVIS", address: "大阪府堺市堺区南島町2-74" },
+      { code: "16370", branch: "0", name: "ガラスフィルムテクニカルセンター株式会社", address: "東京都大田区東矢口3-11-5" },
+      { code: "16410", branch: "0", name: "ガラス工事サービス有限会社", address: "長野県諏訪市湖南1352-1" },
+      { code: "17350", branch: "0", name: "株式会社キューブ", address: "東京都板橋区蓮根1-8-24" },
+      { code: "1770", branch: "0", name: "○Kサイン(鎌田久喜様)", address: "東京都小平市小川西町5-39-3-305" },
+      { code: "17810", branch: "0", name: "グリップス(石井 崇様)", address: "千葉県船橋市海神3-23-48" },
+      { code: "17970", branch: "0", name: "クラフト(和田茂様)", address: "埼玉県志木市館2-1-8-306" },
+      { code: "18690", branch: "0", name: "クローズ(下山順司様)", address: "静岡県沼津市小林台2-9" },
+      { code: "19660", branch: "0", name: "有限会社ゴール", address: "東京都板橋区小豆沢2-10-6" },
+      { code: "20050", branch: "0", name: "有限会社コパン", address: "東京都文京区関口1-16-1" },
+      { code: "20510", branch: "0", name: "サイトウ工芸(斉藤政次様)", address: "東京都葛飾区西水元1-1-10" },
+      { code: "206240", branch: "1", name: "エレマテック株式会社", address: "東京都八王子市大和田町2-14-6" },
+      { code: "20940", branch: "2", name: "株式会社サインズドットコム札幌営業所", address: "北海道札幌市東区東雁来七条2丁目2-33" },
+      { code: "21530", branch: "0", name: "株式会社サガラ", address: "東京都練馬区羽沢1-22-9" },
+      { code: "22280", branch: "0", name: "株式会社サンゲツ購買課", address: "東京都品川区東品川3-20-17" },
+      { code: "22500", branch: "0", name: "株式会社サンセイ", address: "茨城県筑西市藤ケ谷1768-2" },
+      { code: "22510", branch: "0", name: "有限会社サンセイ産業", address: "東京都昭島市昭和町3-10-22" },
+      { code: "22590", branch: "0", name: "株式会社サンテックス", address: "山梨県甲府市上石田4-8-9" },
+      { code: "22790", branch: "0", name: "サンマルコ株式会社", address: "神奈川県相模原市緑区西橋本5-4-30相模原産業創造センター507" },
+      { code: "22830", branch: "0", name: "株式会社サンユニーク", address: "兵庫県神戸市東灘区魚崎中町3-1-31" },
+      { code: "22970", branch: "0", name: "株式会社サンワプランニング", address: "群馬県伊勢崎市馬見塚町三橋533-1" },
+      { code: "23880", branch: "0", name: "株式会社システムアート", address: "秋田県秋田市外旭日川田中43-3" },
+      { code: "242300", branch: "0", name: "ニチモウ株式会社", address: "東京都品川区東品川2-2-20天王洲オーシャンスクエア" },
+      { code: "24250", branch: "0", name: "株式会社ジャパンシールド", address: "福岡県福岡市東区松島1-46-21" },
+      { code: "24370", branch: "0", name: "ジョイクリーン(有松幸雄様)", address: "岡山県岡山市北区門前223-27" },
+      { code: "2450", branch: "0", name: "R・Sプランニング株式会社", address: "栃木県宇都宮市上横田町802-3" },
+      { code: "2470", branch: "0", name: "株式会社RIS", address: "東京都墨田区東向島5-37-3" },
+      { code: "25020", branch: "0", name: "株式会社スター商事", address: "東京都台東区浅草4-30-3第二藤沢ビル" },
+      { code: "25020", branch: "1", name: "株式会社スター商事 青森営業所", address: "青森県青森市荒川字柴田191-2旭日ビル1F" },
+      { code: "25020", branch: "5", name: "株式会社スター商事 横浜営業所", address: "神奈川県横浜市南区新川町2-4-27リバーハイツ新川町" },
+      { code: "25380", branch: "0", name: "有限会社スペースアート", address: "東京都板橋区四葉1-15-6" },
+      { code: "25480", branch: "0", name: "スマイル(山田やよい様)", address: "静岡県静岡市葵区北安東二丁目24-22-407" },
+      { code: "25540", branch: "1", name: "株式会社ラスター", address: "千葉県船橋市海神町2-258-3" },
+      { code: "2600", branch: "0", name: "有限会社SCOPE", address: "東京都三鷹市新川6-13-5" },
+      { code: "26330", branch: "0", name: "有限会社ソーラーアート", address: "群馬県前橋市西片貝町4-16-3" },
+      { code: "26330", branch: "1", name: "有限会社ソーラーアート大宮営業所", address: "埼玉県北足立郡伊奈町栄3丁目92番地" },
+      { code: "26540", branch: "0", name: "有限会社タイダ", address: "東京都中野区若宮3-57-2-104" },
+      { code: "26540", branch: "1", name: "有限会社タイダ 西多摩営業所", address: "東京都西多摩郡瑞穂町長岡2-6-1" },
+      { code: "26550", branch: "0", name: "有限会社ダイテック", address: "新潟県新潟市東区岡山1297-3" },
+      { code: "27320", branch: "0", name: "有限会社タスクミストレス", address: "東京都大田区田園調布2-34-4" },
+      { code: "28670", branch: "0", name: "テクニカルショップシコタ(志子田芳宏様)", address: "山形県山形市伊達城3-21-7" },
+      { code: "28800", branch: "0", name: "株式会社デコス", address: "北海道札幌市東区本町1条10丁目1-29" },
+      { code: "28810", branch: "0", name: "デコラ株式会社", address: "新潟県新潟市中央区姥ヶ山2-10-16" },
+      { code: "28820", branch: "2", name: "デコラティブシステム株式会社", address: "東京都品川区西五反田7-17-3五反田第二長岡ビル1F" },
+      { code: "28830", branch: "0", name: "デコラテックジャパン株式会社", address: "東京都大田区下丸子2-26-4" },
+      { code: "28850", branch: "0", name: "株式会社デコル", address: "神奈川県座間市新田宿234" },
+      { code: "29840", branch: "2", name: "株式会社トーヨーコーポレーション小山営業所", address: "栃木県小山市城北3-9-3" },
+      { code: "29890", branch: "10", name: "トキワ工業株式会社 東北営業所", address: "宮城県仙台市宮城野区中野4丁目5-7" },
+      { code: "29890", branch: "3", name: "トキワ工業株式会社 首都圏営業所", address: "東京都品川区東品川3-18-11" },
+      { code: "29890", branch: "7", name: "トキワ産業株式会社北関東営業所", address: "栃木県佐野市下羽田町新田2002" },
+      { code: "29890", branch: "9", name: "トキワ工業株式会社 北海道営業所", address: "北海道札幌市東区北21条東3-1-12" },
+      { code: "300", branch: "0", name: "有限会社APT", address: "北海道札幌市南区澄川五条13-13-5" },
+      { code: "30340", branch: "0", name: "株式会社トライアングルシステム", address: "愛知県豊橋市三ノ輪町字本興寺3-170" },
+      { code: "31520", branch: "0", name: "株式会社ニップコーポレーション", address: "東京都豊島区東池袋1-25-8タカセビル9f" },
+      { code: "31520", branch: "10", name: "株式会社ニップコーポレーション盛岡営業所", address: "岩手県盛岡市本宮3-36-18" },
+      { code: "31940", branch: "0", name: "株式会社ノダキシーアンドシー", address: "愛知県名古屋市西区名駅3-10-26" },
+      { code: "32840", branch: "0", name: "バンウッド株式会社", address: "東京都足立区六町4-2-6" },
+      { code: "32930", branch: "8", name: "株式会社ビーアンドピー 横浜ファクトリー 4号棟", address: "神奈川県横浜市神奈川区守屋町3-9 4号棟" },
+      { code: "33250", branch: "0", name: "ピカピカワールド(石関仁様)", address: "群馬県太田市大原町256-8" },
+      { code: "33720", branch: "0", name: "ピットイン(岡野貴誉資様)", address: "茨城県土浦市荒川沖83-1" },
+      { code: "33870", branch: "0", name: "ビューティーガレージ(鈴木誠様)", address: "栃木県小山市東間々田3-39-12" },
+      { code: "34180", branch: "0", name: "株式会社ファースト", address: "神奈川県厚木市飯山5413-3" },
+      { code: "34510", branch: "0", name: "株式会社フィット", address: "埼玉県三郷市笹塚30" },
+      { code: "34670", branch: "0", name: "有限会社フイルム工房ミオ", address: "神奈川県川崎市宮前区平6-13-35-303" },
+      { code: "34940", branch: "0", name: "株式会社フジアドバンス", address: "東京都台東区柳橋1-1-15" },
+      { code: "35030", branch: "0", name: "株式会社フジサワ・コーポレーション", address: "東京都豊島区長崎1-10-8" },
+      { code: "35170", branch: "0", name: "株式会社フジヤ", address: "千葉県佐倉市井野町67-2" },
+      { code: "35410", branch: "0", name: "フナイ産業株式会社", address: "大阪府大阪市中央区北久宝寺町1-2-1-1104" },
+      { code: "35430", branch: "0", name: "フュージョンシステム株式会社", address: "長野県千曲市鋳物師屋717" },
+      { code: "35480", branch: "0", name: "有限会社ブライトン商会", address: "神奈川県横浜市南区前里町4-91" },
+      { code: "35670", branch: "0", name: "フラット合成株式会社", address: "北海道札幌市東区東雁来六条2丁目5-25" },
+      { code: "36200", branch: "0", name: "有限会社プレスタ", address: "東京都三鷹市新川6-13-5" },
+      { code: "36210", branch: "0", name: "株式会社プレスタイル", address: "群馬県北群馬郡榛東村長岡2068-16" },
+      { code: "36490", branch: "0", name: "プロスタッフ(渡辺孝幸様)", address: "東京都江戸川区瑞江4-14-2" },
+      { code: "36510", branch: "0", name: "株式会社プロスパー", address: "青森県五所川原市小曲枝村10-9" },
+      { code: "37140", branch: "0", name: "ホットカンパニー(望月厚朗様)", address: "山梨県中巨摩郡昭和町西条3969-1" },
+      { code: "37750", branch: "0", name: "株式会社マインドコーポレーション", address: "東京都府中市若松町2-8-33第2小林ビル1F" },
+      { code: "38270", branch: "0", name: "有限会社まつづか", address: "秋田県大仙市戸蒔谷地中8-2" },
+      { code: "38270", branch: "1", name: "有限会社まつづか", address: "秋田県大仙市戸蒔谷地中8-2" },
+      { code: "38520", branch: "0", name: "有限会社マルキ産業", address: "東京都北区上十条5-29-9" },
+      { code: "38590", branch: "0", name: "大塚刷毛製造株式会社 マーケティング二部", address: "東京都練馬区小竹町2-81-5" },
+      { code: "39150", branch: "13", name: "株式会社ミマキエンジニアリング 北関東営業所", address: "栃木県宇都宮市簗瀬町1784-5" },
+      { code: "40230", branch: "0", name: "有限会社ヤマカワ商会", address: "宮城県仙台市若林区上飯田2-4-10-103" },
+      { code: "40530", branch: "0", name: "株式会社ヤマヒラ", address: "埼玉県越谷市南越谷5-7-14" },
+      { code: "40600", branch: "0", name: "ユアサ商事株式会社", address: "東京都千代田区神田美土代町7番地" },
+      { code: "40620", branch: "0", name: "ユイコーポレーション(森則子様)", address: "静岡県静岡市葵区沓谷2丁目9-4" },
+      { code: "40730", branch: "0", name: "株式会社ユーシート", address: "和歌山県和歌山市有家114-7" },
+      { code: "4140", branch: "0", name: "有限会社アートライン", address: "神奈川県横浜市泉区中田東4-56-28" },
+      { code: "4160", branch: "0", name: "株式会社アートリンク", address: "北海道札幌市白石区米里二条3丁目3番36号" },
+      { code: "41760", branch: "27", name: "リック株式会社横浜営業所", address: "神奈川県横浜市中区山下町89-6プライムタワー横浜 5F" },
+      { code: "41760", branch: "28", name: "リック株式会社郡山営業所", address: "福島県郡山市並木5-15-9" },
+      { code: "41760", branch: "31", name: "リック株式会社仙台営業所", address: "宮城県仙台市若林区伊在1-4-1" },
+      { code: "41860", branch: "0", name: "株式会社リフレイン", address: "宮城県名取市閖上東2丁目3番1" },
+      { code: "41990", branch: "11", name: "リンテック株式会社仙台支店", address: "宮城県仙台市太白区郡山4-2-20" },
+      { code: "41990", branch: "2", name: "リンテック株式会社", address: "東京都板橋区本町23-23" },
+      { code: "42000", branch: "1", name: "リンテックコマース株式会社", address: "東京都台東区松が谷1-3-5JP上野イーストビル6F" },
+      { code: "42010", branch: "1", name: "リンテックサインシステム株式会社 東京本社 シート事業部", address: "東京都目黒区中目黒2-1-27" },
+      { code: "42010", branch: "2", name: "リンテックサインシステム株式会社札幌営業所", address: "北海道札幌市東区北十七条東20-4-16" },
+      { code: "42010", branch: "8", name: "リンテックサインシステム株式会社 製作事業部", address: "東京都板橋区本町23-23" },
+      { code: "42450", branch: "1", name: "株式会社ロング・ラン", address: "長野県中野市江部1376-7" },
+      { code: "42810", branch: "0", name: "株式会社ワイズプランニング", address: "神奈川県横浜市神奈川区入江2-4-18" },
+      { code: "42960", branch: "0", name: "株式会社ワタナベ", address: "東京都立川市錦町4-9-7" },
+      { code: "42960", branch: "1", name: "株式会社ワタナベ板橋支店", address: "東京都板橋区氷川町3-14" },
+      { code: "42960", branch: "10", name: "株式会社ワタナベ静岡支店", address: "静岡県静岡市駿河区敷地1-28-8" },
+      { code: "42960", branch: "2", name: "株式会社ワタナベ平塚支店", address: "神奈川県平塚市桜ケ丘3-45" },
+      { code: "42960", branch: "4", name: "株式会社ワタナベ大宮支店", address: "埼玉県さいたま市北区本郷町584-1" },
+      { code: "42960", branch: "5", name: "株式会社ワタナベ沼津支店", address: "静岡県沼津市真砂町8-6" },
+      { code: "42960", branch: "8", name: "株式会社ワタナベ甲府営業所", address: "山梨県甲府市上石田4-1-25" },
+      { code: "43300", branch: "0", name: "旭川東栄ガラス有限会社", address: "北海道旭川市三条通22丁目1-85" },
+      { code: "43380", branch: "0", name: "株式会社安全ガラス", address: "山形県山形市桜田東4-9-26" },
+      { code: "43450", branch: "0", name: "有限会社伊登勢屋商店", address: "東京都八王子市三崎町7-11" },
+      { code: "43510", branch: "1", name: "伊藤忠プラスチックス株式会社 産業資材一部東京産業資材チーム", address: "東京都千代田区一番町21番地一番町東急ビル" },
+      { code: "44200", branch: "0", name: "株式会社塩川光明堂", address: "静岡県静岡市駿河区西脇263-1" },
+      { code: "44280", branch: "0", name: "株式会社横浜サミット", address: "神奈川県横浜市港南区港南台6-32-17薮埼ビル1F" },
+      { code: "44630", branch: "0", name: "加藤株式会社", address: "東京都千代田区内神田2-5-6亀田ビル" },
+      { code: "44630", branch: "4", name: "加藤株式会社仙台支店", address: "宮城県仙台市青葉区上杉2-8-16" },
+      { code: "44970", branch: "0", name: "鴨沢塗料株式会社", address: "青森県八戸市卸センター2丁目7-8" },
+      { code: "45330", branch: "1", name: "関西フェルトファブリック株式会社東京営業所第1部", address: "東京都千代田区東神田1-11-1関西フエルト7階" },
+      { code: "45490", branch: "0", name: "有限会社関東ガラス店", address: "千葉県松戸市金ヶ作41-1" },
+      { code: "45900", branch: "1", name: "株式会社岩野商会", address: "長野県長野市北長池2051番地" },
+      { code: "46830", branch: "0", name: "株式会社協同制作", address: "東京都荒川区西日暮里1-59-21" },
+      { code: "47560", branch: "0", name: "有限会社原硝子加工所", address: "埼玉県久喜市樋ノ口949-1" },
+      { code: "47670", branch: "0", name: "株式会社古林", address: "新潟県新潟市中央区上所2丁目11-15" },
+      { code: "47720", branch: "1", name: "株式会社五光 群馬支店", address: "群馬県前橋市千代田町4-20-6" },
+      { code: "48000", branch: "0", name: "株式会社光伸プランニング", address: "東京都渋谷区神宮前6-25-16いちご神宮前ビル1F" },
+      { code: "48090", branch: "0", name: "株式会社光陽", address: "東京都大田区東矢口3-11-5" },
+      { code: "48090", branch: "1", name: "株式会社光陽 名古屋営業所", address: "愛知県名古屋市中川区上高畑2丁目42番地" },
+      { code: "48650", branch: "0", name: "江南ジーテック株式会社", address: "神奈川県平塚市東八幡5-11-14" },
+      { code: "48920", branch: "0", name: "有限会社高松フィルム装飾", address: "香川県高松市三谷町1715-10" },
+      { code: "48940", branch: "0", name: "株式会社高倉(フィルム工房ピットイン)", address: "茨城県ひたちなか市東石川2433-85" },
+      { code: "49370", branch: "0", name: "有限会社佐藤硝子建材店", address: "宮城県仙台市青葉区八幡7丁目10-28" },
+      { code: "49940", branch: "0", name: "桜井株式会社", address: "東京都台東区池之端1-2-18NDK池之端ビル" },
+      { code: "49940", branch: "3", name: "桜井株式会社札幌営業所", address: "北海道札幌市中央区南二条西13" },
+      { code: "49940", branch: "8", name: "桜井株式会社 仙台支店", address: "宮城県仙台市宮城野区萩野町1-19-1" },
+      { code: "50210", branch: "2", name: "三鬼化成株式会社 東京支店", address: "東京都千代田区岩本町2-1-20" },
+      { code: "50530", branch: "0", name: "三晶株式会社", address: "大阪府大阪市中央区城見2-1-61ツイン21MIDタワー23階" },
+      { code: "50560", branch: "0", name: "有限会社三笑", address: "静岡県沼津市北高島町14-13" },
+      { code: "50700", branch: "0", name: "東レコムズ三島株式会社", address: "静岡県駿東郡長泉町中土狩1111" },
+      { code: "50800", branch: "1", name: "株式会社三洋", address: "東京都中央区日本橋馬喰町1-13-14" },
+      { code: "50840", branch: "0", name: "株式会社三陽工業", address: "東京都足立区綾瀬3-15-20遠藤ビル3F" },
+      { code: "51180", branch: "0", name: "株式会社山市", address: "新潟県新潟市秋葉区川口578-21" },
+      { code: "51330", branch: "0", name: "株式会社山田硝子店札幌支店", address: "北海道札幌市東区北三十六条東20-2-57" },
+      { code: "5200", branch: "0", name: "アオキ株式会社", address: "茨城県石岡市杉並1-7-16" },
+      { code: "5200", branch: "1", name: "アオキ株式会社つくば支店", address: "茨城県つくば市花畑1-13-6" },
+      { code: "52160", branch: "0", name: "酒田商工株式会社", address: "山形県酒田市堤町2-1" },
+      { code: "53060", branch: "0", name: "昭建産業株式会社", address: "東京都世田谷区梅丘1-2-3-201" },
+      { code: "53060", branch: "1", name: "昭建産業株式会社", address: "宮城県仙台市若林区若林3-4-10" },
+      { code: "53550", branch: "0", name: "常陽化学株式会社", address: "茨城県竜ケ崎市川原代町1725-3" },
+      { code: "53990", branch: "0", name: "株式会社新日本交易", address: "千葉県野田市山崎1313-3" },
+      { code: "54020", branch: "0", name: "新和興業株式会社", address: "東京都文京区湯島2-31-27湯島台ビル2階" },
+      { code: "5450", branch: "0", name: "株式会社アクスル", address: "東京都世田谷区砧1-13-11" },
+      { code: "55130", branch: "0", name: "株式会社西尾硝子鏡工業所", address: "東京都大田区大森北5-9-12" },
+      { code: "55370", branch: "0", name: "斉藤ガラス店(斉藤栄一様)", address: "神奈川県鎌倉市大船3-14-4" },
+      { code: "55460", branch: "0", name: "株式会社石狩ガラスセンター", address: "北海道旭川市永山14条3-3-14" },
+      { code: "55720", branch: "0", name: "株式会社千葉インテリア", address: "秋田県仙北市角館町雲然106-3" },
+      { code: "56110", branch: "0", name: "株式会社船木塗装", address: "東京都足立区扇2-9-18" },
+      { code: "56240", branch: "0", name: "ウインコス協同組合", address: "東京都文京区小石川1-1-1文京ガーデン ゲートタワー8F" },
+      { code: "56400", branch: "0", name: "株式会社創和", address: "新潟県新潟市中央区山二ツ4-14-28" },
+      { code: "56400", branch: "1", name: "株式会社創和東京営業所", address: "東京都足立区谷中2-2-3" },
+      { code: "56400", branch: "2", name: "株式会社創和", address: "新潟県長岡市稲保4丁目729-3" },
+      { code: "56410", branch: "0", name: "有限会社創和工芸", address: "東京都練馬区石神井台5-26-13" },
+      { code: "56680", branch: "0", name: "アートテクニカ", address: "千葉県山武郡九十九里町片貝4044-3" },
+      { code: "56700", branch: "0", name: "株式会社総商", address: "神奈川県川崎市高津区東野川2丁目29番11号" },
+      { code: "56890", branch: "0", name: "株式会社村山商事", address: "東京都立川市西砂町3-17-4" },
+      { code: "56990", branch: "0", name: "株式会社村田塗料店 札幌店", address: "北海道札幌市北区新川西二条1-1-14" },
+      { code: "56990", branch: "2", name: "株式会社村田塗料店 釧路店", address: "北海道釧路市星が浦大通5丁目3-9" },
+      { code: "57800", branch: "0", name: "有限会社大伸", address: "群馬県太田市新田大根町1226-1" },
+      { code: "57930", branch: "0", name: "有限会社大船安全硝子", address: "神奈川県横浜市栄区笠間3-6-15" },
+      { code: "57970", branch: "0", name: "大蔵興産株式会社", address: "福島県福島市大森字舘ノ内69-2" },
+      { code: "58010", branch: "0", name: "有限会社大津商会", address: "東京都江東区新大橋3-17-6" },
+      { code: "58130", branch: "0", name: "有限会社大道", address: "千葉県千葉市中央区今井3-9-8" },
+      { code: "58220", branch: "0", name: "大邦リビング(小林正様)", address: "長野県長野市下駒沢800-12" },
+      { code: "58240", branch: "0", name: "株式会社大明企画", address: "東京都大田区山王2-42-4" },
+      { code: "58430", branch: "0", name: "第一化成工業株式会社", address: "東京都品川区荏原2丁目4-39" },
+      { code: "58570", branch: "0", name: "株式会社沢田", address: "東京都杉並区高円寺南2-41-10" },
+      { code: "59130", branch: "0", name: "株式会社中川ケミカル 総務部ロジスティクス課", address: "東京都江戸川区松本2-24-1株式会社中川ケミカル 東京配送センター内" },
+      { code: "59160", branch: "0", name: "株式会社中川堂福島営業所", address: "福島県西白河郡西郷村小田倉原25" },
+      { code: "59160", branch: "1", name: "株式会社中川堂仙台営業所", address: "宮城県仙台市若林区新寺2-2-35" },
+      { code: "59160", branch: "2", name: "株式会社中川堂", address: "東京都千代田区東神田1-14-1" },
+      { code: "59170", branch: "0", name: "株式会社中村ガラス", address: "新潟県新潟市北区島見町3399番地44" },
+      { code: "59280", branch: "1", name: "中島硝子工業株式会社 関東・東庄工場", address: "千葉県香取郡東庄町宮野台1-49" },
+      { code: "59440", branch: "0", name: "猪口美術広芸(猪口孝様)", address: "栃木県宇都宮市駒生町3321-29" },
+      { code: "59590", branch: "0", name: "長野板販株式会社", address: "長野県長野市若穂綿内407-1板硝子流通ターミナル内" },
+      { code: "59650", branch: "0", name: "株式会社槌屋", address: "東京都港区芝大門2丁目5-3" },
+      { code: "6010", branch: "0", name: "有限会社アスナル", address: "神奈川県川崎市中原区苅宿14-1" },
+      { code: "60440", branch: "0", name: "東京ガラスフィルム事業協同組合", address: "東京都千代田区神田須田町2-57-7グリーンパーク神田402号" },
+      { code: "60460", branch: "0", name: "株式会社東京シスコン", address: "東京都港区赤坂9-1-7赤坂レジデンシャル660" },
+      { code: "60680", branch: "0", name: "東京特種紙業株式会社", address: "東京都千代田区神田小川町3-28-11" },
+      { code: "61180", branch: "0", name: "東洋粘着資材株式会社", address: "東京都練馬区貫井1-40-3 グランソラーレ中村橋1階" },
+      { code: "61390", branch: "0", name: "有限会社藤和ケミカル", address: "神奈川県相模原市中央区上溝4400" },
+      { code: "61560", branch: "0", name: "内外テック株式会社", address: "宮城県仙台市泉区明通3-31仙台泉物流センター4F" },
+      { code: "61720", branch: "0", name: "日榮新化株式会社", address: "大阪府東大阪市若江東町6-1-33" },
+      { code: "62060", branch: "0", name: "日本オーナメント株式会社", address: "東京都千代田区九段南2-6-6" },
+      { code: "62140", branch: "0", name: "日本サーモラックス株式会社", address: "東京都足立区入谷2-3-1" },
+      { code: "62230", branch: "0", name: "熊沢印刷工芸株式会社 ドライブシール事業部", address: "東京都北区赤羽北2-35-7" },
+      { code: "62240", branch: "0", name: "三井物産プラスチック株式会社", address: "東京都千代田区大手町一丁目3-1JAビル" },
+      { code: "62270", branch: "0", name: "株式会社日本パーツ東京営業所", address: "神奈川県大和市上草柳8-14-4" },
+      { code: "62270", branch: "23", name: "株式会社日本パーツ仙台営業所", address: "宮城県仙台市若林区6丁の目中町30-1" },
+      { code: "62600", branch: "0", name: "日本電計株式会社", address: "東京都台東区上野5-14-12NDビル7階" },
+      { code: "63250", branch: "0", name: "株式会社美光商会", address: "千葉県千葉市中央区生実町1747-1 1F" },
+      { code: "63540", branch: "0", name: "菱洋商事株式会社", address: "東京都新宿区高田馬場4-4-2尾上ビル303号室" },
+      { code: "63540", branch: "4", name: "菱洋商事株式会社仙台営業所", address: "東京都新宿区高田馬場4-4-2尾上ビル303号室" },
+      { code: "63640", branch: "0", name: "不二化成品株式会社沼津事業所", address: "静岡県沼津市東椎路1-1" },
+      { code: "63710", branch: "1", name: "富士フイルムイメージングシステムズ株式会社 イメージテック事業部 5F", address: "東京都品川区西五反田" },
+      { code: "63830", branch: "0", name: "株式会社富士硝子", address: "東京都板橋区中丸町17-1" },
+      { code: "64190", branch: "0", name: "株式会社福商メタル", address: "東京都豊島区東池袋2-44-3本堂ビル301" },
+      { code: "64640", branch: "0", name: "有限会社穂高", address: "東京都東大和市奈良橋5丁目814-4" },
+      { code: "65390", branch: "0", name: "有限会社名神エンタープライズ", address: "長野県長野市大町1039-1" },
+      { code: "65530", branch: "0", name: "株式会社明和", address: "東京都豊島区要町2-21-10" },
+      { code: "66060", branch: "0", name: "緑川化成工業株式会社", address: "東京都台東区駒形1-4-18" },
+      { code: "66060", branch: "3", name: "緑川化成工業株式会社 仙台営業所", address: "宮城県仙台市宮城野区銀杏町37-5" },
+      { code: "66220", branch: "0", name: "株式会社六方堂", address: "北海道札幌市東区北三十三条東6-4-3" },
+      { code: "66250", branch: "0", name: "株式会社和光", address: "東京都調布市深大寺北町6ー36ー4" },
+      { code: "66350", branch: "0", name: "株式会社廣建", address: "東京都品川区南大井6-4-22" },
+      { code: "68430", branch: "0", name: "株式会社タクト", address: "宮城県仙台市宮城野区新田3-21-28" },
+      { code: "68680", branch: "0", name: "有限会社オフィスFirst", address: "群馬県高崎市下大類町274-1" },
+      { code: "68690", branch: "0", name: "新日本創業株式会社", address: "東京都新宿区若葉1-22" },
+      { code: "68810", branch: "0", name: "日本エフ・ディー・シー株式会社", address: "東京都豊島区東池袋2-39-2大住ビル9F" },
+      { code: "68980", branch: "0", name: "住理工商事株式会社", address: "愛知県名古屋市中区丸の内3丁目17番13号いちご丸の内ビル6F" },
+      { code: "68980", branch: "2", name: "住理工商事株式会社 東京営業所", address: "東京都港区浜松町1-18-16住友浜松町ビル8階" },
+      { code: "69190", branch: "0", name: "住友理工株式会社 リフレシャイン事業室", address: "愛知県小牧市東三丁目1番地" },
+      { code: "69190", branch: "1", name: "住友理工株式会社 産業用機能部品事業本部 化工品事業部 技術部 開発課", address: "愛知県小牧市東三丁目1番地" },
+      { code: "69840", branch: "0", name: "株式会社タクミ", address: "埼玉県三郷市三郷2丁目11-5グリーンパーク三郷902" },
+      { code: "70050", branch: "0", name: "株式会社R.P.M", address: "茨城県土浦市乙戸1002-6" },
+      { code: "70190", branch: "0", name: "コーワ化成株式会社", address: "東京都千代田区岩本町2-9-7RECビル5F" },
+      { code: "70510", branch: "0", name: "サイナジーデザイン株式会社", address: "茨城県つくば市みどりの中央68-5マルシェみどりのII 101" },
+      { code: "70870", branch: "0", name: "株式会社板通", address: "群馬県太田市東新町329" },
+      { code: "70960", branch: "0", name: "Rock a film(田中龍治様)", address: "埼玉県川口市神戸546-25" },
+      { code: "70990", branch: "0", name: "東桜株式会社", address: "東京都北区中里1-6-5" },
+      { code: "71050", branch: "0", name: "株式会社Dブランド", address: "千葉県野田市つつみ野1-3-1" },
+      { code: "71490", branch: "0", name: "有限会社ユニアート", address: "茨城県水戸市元吉田町2171-6" },
+      { code: "71950", branch: "0", name: "平富株式会社", address: "岩手県一関市散田4-2" },
+      { code: "72440", branch: "0", name: "赤武株式会社", address: "静岡県沼津市西椎路14番地" },
+      { code: "72580", branch: "0", name: "有限会社木更津自動車硝子", address: "千葉県木更津市長須賀2037-1" },
+      { code: "72860", branch: "0", name: "株式会社コマースポイント", address: "長野県上田市住吉343-1" },
+      { code: "72940", branch: "0", name: "株式会社VAREL", address: "東京都葛飾区東立石2-25-9東立石ホビー01" },
+      { code: "73000", branch: "0", name: "株式会社2COM", address: "埼玉県八潮市木曽根641-1" },
+      { code: "73110", branch: "0", name: "有限会社フィックス", address: "新潟県新潟市中央区清五郎290-1" },
+      { code: "73130", branch: "0", name: "株式会社クラフト", address: "山形県山形市南栄町1-1-56" },
+      { code: "73240", branch: "0", name: "株式会社システムデザイン", address: "東京都中野区本町4-19-12" },
+      { code: "73390", branch: "0", name: "大協技研工業株式会社", address: "神奈川県相模原市南区相南1-22-4DKビル" },
+      { code: "740", branch: "0", name: "CIPSアドバンス株式会社", address: "東京都立川市泉町935立飛リアルエステート西地区236号棟201号室" },
+      { code: "74150", branch: "0", name: "株式会社ミヤキ", address: "宮城県仙台市宮城野区幸町2-1-13" },
+      { code: "74230", branch: "0", name: "国際興業株式会社 商事部", address: "東京都中央区八重洲2丁目10番3号" },
+      { code: "7460", branch: "0", name: "株式会社アペックス", address: "栃木県宇都宮市下川俣町206-64" },
+      { code: "74710", branch: "0", name: "株式会社丸吾", address: "群馬県高崎市北原町280番地1" },
+      { code: "75290", branch: "0", name: "株式会社ウィルコーポレーション", address: "埼玉県さいたま市大宮区吉敷町4-248-5-601" },
+      { code: "75410", branch: "0", name: "プロセブン株式会社", address: "大阪府大阪市中央区南船場1-3-5" },
+      { code: "75570", branch: "0", name: "帝人フロンティア株式会社", address: "東京都港区東新橋2-14-1NBFコモディオ汐留" },
+      { code: "75690", branch: "0", name: "株式会社パック", address: "東京都江東区亀戸1-28-6タニビル4階" },
+      { code: "76170", branch: "0", name: "株式会社東冷", address: "東京都中央区日本橋蛎殻町1-13-1ユニゾ蛎殻町北島ビル" },
+      { code: "76180", branch: "0", name: "リケンテクノス株式会社", address: "東京都千代田区神田淡路町2丁目101番地ワテラスタワー" },
+      { code: "76370", branch: "0", name: "相日防災株式会社", address: "神奈川県南足柄市狩野291-1" },
+      { code: "7640", branch: "0", name: "有限会社アユザワ企画", address: "山梨県甲府市西高橋町233-4" },
+      { code: "76890", branch: "0", name: "タキロンマテックス株式会社", address: "東京都港区港南2-15-1品川インターシティA棟30F" },
+      { code: "76970", branch: "0", name: "窓テックスジャパン株式会社", address: "東京都目黒区洗足2-24-9洗足ハイム204" },
+      { code: "77160", branch: "0", name: "株式会社青山ガーディアン", address: "東京都港区南青山3-14-13 2F" },
+      { code: "77180", branch: "0", name: "株式会社東亜内装", address: "東京都昭島市玉川町5-10-11" },
+      { code: "77240", branch: "0", name: "HAL株式会社", address: "東京都新宿区西早稲田1-13-3斉藤ビル1階" },
+      { code: "7750", branch: "0", name: "アルゴ株式会社", address: "大阪府大阪市東成区神路3-7-8" },
+      { code: "77840", branch: "0", name: "株式会社日本エキス", address: "静岡県焼津市飯淵827-2" },
+      { code: "78140", branch: "0", name: "有限会社ラインアウト", address: "東京都稲城市矢野口953" },
+      { code: "7820", branch: "0", name: "株式会社ARTISAN", address: "神奈川県川崎市高津区新作3-25-13" },
+      { code: "78410", branch: "0", name: "株式会社ケイアイシー", address: "東京都新宿区新宿1丁目28-11小杉ビル" },
+      { code: "78710", branch: "0", name: "神台産業株式会社", address: "東京都台東区千束4-32-11" },
+      { code: "78870", branch: "0", name: "株式会社ヴォーグ", address: "東京都江東区北砂3-5-5" },
+      { code: "78980", branch: "0", name: "フェザー(酒井宣明様)", address: "岐阜県岐阜市鷺山北町6-23" },
+      { code: "79590", branch: "0", name: "株式会社エバニュー", address: "東京都江東区新砂1-6-35JMFビル東陽町02 6F" },
+      { code: "79600", branch: "0", name: "株式会社B.B JUMP", address: "岩手県花巻市湯本19-109-9" },
+      { code: "79610", branch: "0", name: "株式会社久保組", address: "東京都青梅市藤橋3-10-16" },
+      { code: "79630", branch: "0", name: "株式会社SHOOTING STARS", address: "埼玉県上尾市緑丘1-1-48" },
+      { code: "79700", branch: "0", name: "株式会社プロジェクトジャック", address: "北海道札幌市清田区清田七条3-4-11" },
+      { code: "79810", branch: "0", name: "株式会社ABE MOTORS", address: "東京都港区港南5-1-50" },
+      { code: "7990", branch: "0", name: "アルフォリア・ジャパン株式会社", address: "東京都板橋区南常盤台2-22-9" },
+      { code: "79930", branch: "0", name: "AGC株式会社", address: "東京都千代田区丸の内一丁目5番1号" },
+      { code: "80450", branch: "0", name: "株式会社廣澤精機製作所 建材事業部", address: "茨城県筑西市玉戸2908" },
+      { code: "80810", branch: "0", name: "三和商事株式会社", address: "千葉県市川市香取1丁目4-13" },
+      { code: "80820", branch: "0", name: "岸建築(岸宏和様)", address: "神奈川県茅ヶ崎市元町11-3" },
+      { code: "80850", branch: "0", name: "○タナカフィルム(田中義理様)", address: "埼玉県川口市安行原1079-7" },
+      { code: "80940", branch: "0", name: "東京ビジネスサービス株式会社 札幌支店", address: "北海道札幌市中央区北五条西5-2-12住友生命札幌ビル4F" },
+      { code: "80970", branch: "0", name: "富士フイルムグラフィックソリューションズ株式会社", address: "東京都港区西麻布2-26-30富士フイルム西麻布ビル" },
+      { code: "80990", branch: "0", name: "株式会社桑原組", address: "広島県広島市西区己斐本町3-17-24" },
+      { code: "81150", branch: "0", name: "株式会社三和製作所", address: "千葉県市川市原木2526-32" },
+      { code: "81310", branch: "0", name: "株式会社ダイカン 大阪オフィス", address: "大阪府大阪市浪速区難波中2-10-70パークスタワー13F" },
+      { code: "81350", branch: "0", name: "ラッキーコーヒーマシン株式会社", address: "東京都港区新橋6-1-11Daiwa御成門ビル6階" },
+      { code: "81940", branch: "0", name: "株式会社ハラマチサイン東京", address: "埼玉県三郷市栄4-275-2" },
+      { code: "82110", branch: "0", name: "株式会社 north clover", address: "北海道札幌市手稲区手稲前田579-6" },
+      { code: "82180", branch: "0", name: "株式会社アペックス", address: "神奈川県鎌倉市大船4-15-6宮地ビル2A" },
+      { code: "82430", branch: "0", name: "リソラ株式会社", address: "埼玉県久喜市鷲宮2338-16" },
+      { code: "82560", branch: "0", name: "株式会社宮技プラン", address: "宮城県仙台市宮城野区幸町2-1-13" },
+      { code: "82580", branch: "1", name: "足立硝子株式会社 東京営業所", address: "神奈川県横浜市鶴見区市場大和町1-14" },
+      { code: "82810", branch: "0", name: "千代田電資株式会社", address: "東京都目黒区三田2-5-12" },
+      { code: "83070", branch: "0", name: "有限会社バク", address: "千葉県船橋市みやぎ台4-5-9" },
+      { code: "83240", branch: "0", name: "株式会社ルミ・クリエイト", address: "北海道函館市湯川町3丁目43-17" },
+      { code: "83250", branch: "0", name: "株式会社齋藤塗装店", address: "東京都足立区栗原1-24-2" },
+      { code: "83650", branch: "0", name: "株式会社アペックス", address: "東京都八王子市宇津木町523-1" },
+      { code: "83850", branch: "0", name: "MA”DETAIL(羽田将也様)", address: "山梨県富士吉田市小明見2-13-16" },
+      { code: "84180", branch: "0", name: "株式会社ハイテック", address: "東京都八王子市中野山王1-9-1" },
+      { code: "8420", branch: "0", name: "株式会社イシカワ", address: "東京都渋谷区東2-14-10" },
+      { code: "84460", branch: "0", name: "ヨリ窓(早坂弘貴様)", address: "神奈川県平塚市徳延100-1-1-202" },
+      { code: "84480", branch: "0", name: "S-Field(佐々木一夫様)", address: "北海道札幌市東区伏古一条4丁目-14-203" },
+      { code: "84530", branch: "0", name: "株式会社藤井工芸", address: "東京都中央区日本橋本町4-13-12" },
+      { code: "84570", branch: "0", name: "有限会社デザイン21", address: "青森県三戸郡五戸町切谷内字佐野上平18" },
+      { code: "85050", branch: "0", name: "澤田商工株式会社", address: "東京都練馬区豊玉中2-11-15ラヴィール豊玉1階" },
+      { code: "85250", branch: "0", name: "かながわフィルム株式会社", address: "神奈川県横浜市泉区下和泉3-12-21" },
+      { code: "8530", branch: "0", name: "株式会社イタバ", address: "埼玉県川口市安行原56-1" },
+      { code: "8530", branch: "1", name: "株式会社イタバ佐野事業所", address: "栃木県佐野市馬門町2001-1" },
+      { code: "8530", branch: "2", name: "株式会社イタバ群馬営業所", address: "群馬県高崎市浜川町344-1" },
+      { code: "8530", branch: "3", name: "株式会社イタバ新潟営業所", address: "新潟県新潟市中央区鳥屋野2002-2" },
+      { code: "8530", branch: "4", name: "株式会社イタバ 郡山営業所", address: "福島県郡山市田村町金屋字孫右エ門平56-1" },
+      { code: "85430", branch: "0", name: "有限会社K,K住建", address: "東京都練馬区旭町3-30-8" },
+      { code: "85490", branch: "0", name: "株式会社Be-kind", address: "鹿児島県鹿児島市東谷山7-25-5" },
+      { code: "85570", branch: "0", name: "株式会社したみ屋", address: "埼玉県三郷市泉2-20-3" },
+      { code: "8680", branch: "0", name: "伊藤 文仁様", address: "千葉県松戸市大橋463-12" },
+      { code: "89920", branch: "0", name: "アイエヌ技研株式会社", address: "東京都台東区清川2-11-1" },
+      { code: "89960", branch: "0", name: "東京ワックス株式会社", address: "埼玉県深谷市上野台2920番地" },
+      { code: "90010", branch: "0", name: "合同会社スマート", address: "千葉県松戸市小金原5-17-2メゾン・ド 荒川206号" },
+      { code: "9290", branch: "0", name: "インテリア吉井(吉井勇人)", address: "山梨県甲斐市中下条1477ハイツ神沢303" },
+      { code: "9560", branch: "0", name: "ウィンデックス株式会社", address: "神奈川県厚木市妻田東3-10-7" },
+      { code: "9760", branch: "0", name: "株式会社ウエノ", address: "東京都台東区東上野1-9-6" },
+      { code: "9800", branch: "0", name: "有限会社ウェルスインコーポレイテッド", address: "群馬県富岡市妙義町下高田1949-1" },
+      { code: "990", branch: "0", name: "株式会社ECOP", address: "京都府京都市南区吉祥院這登西町14ECOPビル" },
+      { code: "99999900", branch: "3", name: "福山通運株式会社 千葉八千代支店", address: "千葉県八千代市上高野1353-4" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(株)創和", address: "東京都千代田区飯田橋" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(有)坪井", address: "東京都板橋区小豆沢2-31-1-907" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(株)コーシンインテックス 松本営業所", address: "長野県松本市石芝4-2-14" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(株)ライベック", address: "東京都品川区西五反田" },
+      { code: "ZZZZZZZZ", branch: "3", name: "皆商事  宮岡 孝司様", address: "東京都杉並区堀ノ内1-19-20" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(株)アペックス", address: "東京都八王子市宇津木町523-1" },
+      { code: "ZZZZZZZZ", branch: "3", name: "千代田電資(株)東京営業所", address: "東京都目黒区三田2-5-12" },
+      { code: "ZZZZZZZZ", branch: "3", name: "コベルコ建機日本(株)", address: "埼玉県さいたま市桜区田島" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(有)多摩広芸社", address: "東京都町田市南町田1-26-15" },
+      { code: "ZZZZZZZZ", branch: "3", name: "SORTE", address: "埼玉県児玉郡上里町忍保" },
+      { code: "ZZZZZZZZ", branch: "3", name: "有限会社BACU", address: "千葉県船橋市みやぎ台4-5-9" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(株)ルミ・クリエイト", address: "北海道函館市湯川町3丁目43-17" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(株)フェイスワン", address: "東京都北区豊島1-15-9みさこビル7階" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(有)曽根機工", address: "栃木県小山市乙女3-25-7" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(有)潤間ガラス総業", address: "千葉県市原市姉崎962-1" },
+      { code: "ZZZZZZZZ", branch: "3", name: "マルオ建設工業株式会社 朝妻様", address: "北海道旭川市豊岡9条1丁目4-10" },
+      { code: "ZZZZZZZZ", branch: "3", name: "ケンズカーデベロップメント", address: "長野県上水内郡飯綱町倉井1652-2" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社高橋商会", address: "埼玉県熊谷市籠原南3-207" },
+      { code: "ZZZZZZZZ", branch: "3", name: "窓フィルム施工専門店 窓レーヌ", address: "千葉県千葉市若葉区西都賀5-14-2" },
+      { code: "ZZZZZZZZ", branch: "3", name: "戸谷 町子様", address: "東京都大田区北糀谷2-4-2ライオンズマンション京浜蒲田501" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社エス・イー・エイ", address: "千葉県浦安市富士見3-16-3" },
+      { code: "ZZZZZZZZ", branch: "3", name: "新東洋産業(株)", address: "東京都大田区大森北3-15-1" },
+      { code: "ZZZZZZZZ", branch: "3", name: "八代硝子株式会社   山内様", address: "東京都世田谷区桜新町" },
+      { code: "ZZZZZZZZ", branch: "3", name: "東京都板硝子商工協同組合 事務局", address: "東京都中央区日本橋浜町2-38-9浜町TSKビル2階" },
+      { code: "ZZZZZZZZ", branch: "3", name: "東京都板硝子商工協同組合", address: "東京都中央区日本橋浜町2-38-9浜町TSKビル2階" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(有)曽根機工", address: "栃木県小山市東間々田3-36-30" },
+      { code: "ZZZZZZZZ", branch: "3", name: "東京都板硝子商工協同組合", address: "東京都中央区日本橋浜町2-89-9" },
+      { code: "ZZZZZZZZ", branch: "3", name: "東京KF 山上次長", address: "東京都品川区上大崎3-1-1JR東急目黒ビル15F" },
+      { code: "ZZZZZZZZ", branch: "3", name: "日本清掃株式会社", address: "茨城県水戸市赤塚1-1997-9" },
+      { code: "ZZZZZZZZ", branch: "3", name: "ニチモウ株式会社 資材事業本部化成品営業第二チーム", address: "東京都品川区東品川2-2-20天王洲オーシャンスクエア12F" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社ハイテック", address: "東京都八王子市中野山王1-9-1042-624-8224" },
+      { code: "ZZZZZZZZ", branch: "3", name: "有限会社サーフ", address: "埼玉県熊谷市三ケ尻416-6" },
+      { code: "ZZZZZZZZ", branch: "3", name: "川﨑様", address: "栃木県真岡市高勢町3-14サンホーム住宅K五" },
+      { code: "ZZZZZZZZ", branch: "3", name: "ウィステック東北", address: "宮城県岩沼市土ケ崎2丁目2-28-105" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社コスモテック", address: "東京都立川市錦町5-5-35" },
+      { code: "ZZZZZZZZ", branch: "3", name: "メンテナンス商会", address: "茨城県つくば市春日1丁目6-2" },
+      { code: "ZZZZZZZZ", branch: "3", name: "ウィステック東北", address: "宮城県仙台市青葉区一番町2-6-1シティハウス一番町中央2F" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(株)ティーエフサービス", address: "新潟県燕市八王寺2494" },
+      { code: "ZZZZZZZZ", branch: "3", name: "有限会社デザイン21", address: "青森県三戸郡五戸町切谷内字佐野上平18" },
+      { code: "ZZZZZZZZ", branch: "3", name: "公益財団法人 井之頭病院  施設管理課", address: "東京都三鷹市上連雀4-14-1" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社ユタカファーマシー", address: "岐阜県大垣市林町10-1339-1" },
+      { code: "ZZZZZZZZ", branch: "3", name: "杉田硝子工業所", address: "埼玉県さいたま市北区大成町4-340-6" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社ナクト 駿河台大学作業所 高良様", address: "埼玉県飯能市阿須698" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社ヤマカミ さいたま支店", address: "埼玉県桶川市北1-25-26" },
+      { code: "ZZZZZZZZ", branch: "3", name: "大場 幸一", address: "東京都世田谷区八幡山1-5-13" },
+      { code: "ZZZZZZZZ", branch: "3", name: "杉田硝子工業所  松浦様", address: "埼玉県さいたま市北区大成町4-340-6" },
+      { code: "ZZZZZZZZ", branch: "3", name: "アーク産業株式会社", address: "神奈川県横浜市南区吉野町2-5サウスライン横浜2F" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社リバティークリエイト", address: "東京都中野区上鷺宮4-17-6" },
+      { code: "ZZZZZZZZ", branch: "3", name: "コジマ美装社", address: "神奈川県平塚市中里" },
+      { code: "ZZZZZZZZ", branch: "3", name: "センコー商事(株)", address: "東京都江東区潮見" },
+      { code: "ZZZZZZZZ", branch: "3", name: "充工務店一級建築士事務所", address: "静岡県三島市静岡県三島市西若町7-42-201" },
+      { code: "ZZZZZZZZ", branch: "3", name: "ミクロマスター株式会社", address: "東京都渋谷区元代々木町31-1ニチワビル7F" },
+      { code: "ZZZZZZZZ", branch: "3", name: "西本産商(株)", address: "千葉県習志野市東習志野5-4-4" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(有)杉田硝子工業所", address: "埼玉県さいたま市北区大成町4-340-6" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社 旅館たにがわ", address: "群馬県利根郡みなかみ町谷川524-1" },
+      { code: "ZZZZZZZZ", branch: "3", name: "日本ハムエンジニアリング株式会社", address: "東京都品川区大崎2-1-1大崎ThinkParkTower13F" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(有)澤口工務店", address: "東京都目黒区東が丘1-9-3" },
+      { code: "ZZZZZZZZ", branch: "3", name: "東レ建材(株)環境資材部複合材料課", address: "東京都中央区日本橋大伝馬町12-2セイショウ日本橋ビル" },
+      { code: "ZZZZZZZZ", branch: "3", name: "センコー商事(株)", address: "東京都江東区潮見2-8-10潮見SIFビル4F" },
+      { code: "ZZZZZZZZ", branch: "3", name: "ウィステック東北 伊藤康?様", address: "宮城県岩沼市土ケ崎2丁目2-28-105" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社 廣洋 森居様", address: "東京都千代田区神田須田町2-8  ASKビル3F" },
+      { code: "ZZZZZZZZ", branch: "3", name: "藤井産業(株) 千葉稲毛営業所 電機課", address: "千葉県千葉市稲毛区作草部町" },
+      { code: "ZZZZZZZZ", branch: "3", name: "(有)潤間ガラス総業", address: "千葉県市原市姉崎" },
+      { code: "ZZZZZZZZ", branch: "3", name: "D-WORKS ディーワークス", address: "北海道札幌市北区新琴似12条4丁目4-15" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社進和 名古屋営業第1部", address: "愛知県名古屋市守山区苗代2-9-3" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社モリキ", address: "長野県長野市大豆島4216" },
+      { code: "ZZZZZZZZ", branch: "3", name: "株式会社ライフェンス", address: "千葉県松戸市南花島3丁目45-6" }
+    ];
+
+    // ローカルストレージおよび状態の初期化
+    let customers = JSON.parse(localStorage.getItem('app_customers')) || initialCustomers;
+    let logs = JSON.parse(localStorage.getItem('app_logs')) || [];
+    let db = null;
+
+    // 今日の日付をデフォルト設定
+    document.getElementById('visit-date').valueToDate = new Date();
+    document.getElementById('visit-date').value = new Date().toISOString().substring(0, 10);
+
+    // タブ切り替え
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + tabName).classList.add('active');
+      document.getElementById('nav-' + tabName).classList.add('active');
+
+      const titles = { input: '訪問日記の入力', history: '得意先別履歴', timeline: '全体ログ', settings: '設定・マスター管理' };
+      document.getElementById('header-title').innerText = titles[tabName];
+
+      if (tabName === 'timeline') renderTimeline();
+    }
+
+    // インクリメンタル検索（共通処理）
+    function setupIncrementalSearch(inputId, suggestBoxId, hiddenId) {
+      const input = document.getElementById(inputId);
+      const box = document.getElementById(suggestBoxId);
+      const hidden = document.getElementById(hiddenId);
+
+      input.addEventListener('input', () => {
+        const query = input.value.trim().toLowerCase();
+        box.innerHTML = '';
+        if (!query) { box.style.display = 'none'; return; }
+
+        const filtered = customers.filter(c => 
+          c.code.toLowerCase().includes(query) || 
+          c.branch.toLowerCase().includes(query) || 
+          c.name.toLowerCase().includes(query)
+        );
+
+        if (filtered.length === 0) { box.style.display = 'none'; return; }
+
+        filtered.forEach(c => {
+          const div = document.createElement('div');
+          div.className = 'suggest-item';
+          const idStr = `${c.code}-${c.branch}`;
+          div.innerText = `[${idStr}] ${c.name}`;
+          div.onclick = () => {
+            input.value = `[${idStr}] ${c.name}`;
+            hidden.value = idStr;
+            box.style.display = 'none';
+            if (inputId === 'history-customer-search') renderCustomerHistory(idStr);
+          };
+          box.appendChild(div);
+        });
+        box.style.display = 'block';
+      });
+
+      document.addEventListener('click', (e) => {
+        if (e.target !== input) box.style.display = 'none';
+      });
+    }
+
+    setupIncrementalSearch('customer-search', 'suggest-box', 'selected-customer-id');
+    setupIncrementalSearch('history-customer-search', 'history-suggest-box', 'history-customer-id');
+
+    // 日記の保存処理
+    document.getElementById('diary-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const customerId = document.getElementById('selected-customer-id').value;
+      if (!customerId) { alert('得意先を選択してください。'); return; }
+
+      const customer = customers.find(c => `${c.code}-${c.branch}` === customerId);
+      const newLog = {
+        id: Date.now().toString(),
+        customerId: customerId,
+        customerName: customer ? customer.name : '',
+        date: document.getElementById('visit-date').value,
+        details: document.getElementById('visit-details').value,
+        nextAction: document.getElementById('next-action').value,
+        createdAt: new Date().toISOString()
+      };
+
+      logs.push(newLog);
+      saveLogs();
+      alert('訪問日記を保存しました。');
+      
+      // フォームのリセット
+      document.getElementById('visit-details').value = '';
+      document.getElementById('next-action').value = '';
+      document.getElementById('customer-search').value = '';
+      document.getElementById('selected-customer-id').value = '';
+    });
+
+    // データの保存（ローカルストレージ & Firebase対応）
+    function saveLogs() {
+      localStorage.setItem('app_logs', JSON.stringify(logs));
+      if (db) {
+        logs.forEach(log => db.collection('logs').doc(log.id).set(log));
+      }
+    }
+    function saveCustomers() {
+      localStorage.setItem('app_customers', JSON.stringify(customers));
+      if (db) {
+        customers.forEach(c => db.collection('customers').doc(`${c.code}-${c.branch}`).set(c));
+      }
+    }
+
+    // 得意先別履歴の表示
+    function renderCustomerHistory(customerId) {
+      const summaryBox = document.getElementById('customer-summary');
+      const listContainer = document.getElementById('customer-log-list');
+      listContainer.innerHTML = '';
+
+      const customerLogs = logs.filter(l => l.customerId === customerId).sort((a,b) => new Date(b.date) - new Date(a.date));
+
+      if (customerLogs.length === 0) {
+        summaryBox.innerHTML = '<div class="card"><p>この得意先の訪問履歴はありません。</p></div>';
+        return;
+      }
+
+      // 最終訪問日と経過日数計算
+      const latestDate = new Date(customerLogs[0].date);
+      const today = new Date();
+      const diffTime = Math.abs(today - latestDate);
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+      summaryBox.innerHTML = `
+        <div class="card">
+          <span class="elapsed-badge">最終訪問から ${diffDays} 日経過</span>
+          <div><strong>最終訪問日:</strong> ${customerLogs[0].date}</div>
+        </div>
+      `;
+
+      customerLogs.forEach(log => {
+        listContainer.appendChild(createLogCard(log));
+      });
+    }
+
+    // 全体タイムライン表示
+    function renderTimeline() {
+      const listContainer = document.getElementById('timeline-list');
+      listContainer.innerHTML = '';
+      const sortedLogs = [...logs].sort((a,b) => new Date(b.date) - new Date(a.date));
+
+      if (sortedLogs.length === 0) {
+        listContainer.innerHTML = '<div class="card"><p>訪問履歴がありません。</p></div>';
+        return;
+      }
+
+      sortedLogs.forEach(log => listContainer.appendChild(createLogCard(log, true)));
+    }
+
+    // 日記カード要素生成
+    function createLogCard(log, showCustomerName = false) {
+      const div = document.createElement('div');
+      div.className = 'log-item';
+      div.innerHTML = `
+        <div class="log-header">
+          <span>${log.date}</span>
+          <button onclick="deleteLog('${log.id}')" style="color:red; background:none; border:none; cursor:pointer;">削除</button>
+        </div>
+        ${showCustomerName ? `<div class="log-title">${log.customerName}</div>` : ''}
+        <div class="log-content">${escapeHtml(log.details)}</div>
+        ${log.nextAction ? `<div class="log-action"><strong>次回・宿題:</strong><br>${escapeHtml(log.nextAction)}</div>` : ''}
+      `;
+      return div;
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+    }
+
+    function deleteLog(id) {
+      if (confirm('この訪問履歴を削除しますか？')) {
+        logs = logs.filter(l => l.id !== id);
+        saveLogs();
+        if (db) db.collection('logs').doc(id).delete();
+        renderTimeline();
+        const activeHistId = document.getElementById('history-customer-id').value;
+        if (activeHistId) renderCustomerHistory(activeHistId);
+      }
+    }
+
+    // 得意先マスタの個別追加
+    document.getElementById('master-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const newC = {
+        code: document.getElementById('m-code').value.trim(),
+        branch: document.getElementById('m-branch').value.trim(),
+        name: document.getElementById('m-name').value.trim(),
+        address: document.getElementById('m-address').value.trim()
+      };
+      customers.push(newC);
+      saveCustomers();
+      alert('得意先を追加しました。');
+      e.target.reset();
+    });
+
+    // CSV取り込み & 未登録得意先の自動登録
+    document.getElementById('csv-file').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const lines = evt.target.result.split('\n');
+        let addedCount = 0;
+        lines.forEach((line, idx) => {
+          if (idx === 0 || !line.trim()) return; // ヘッダー・空行スキップ
+          const cols = line.split(',');
+          if (cols.length >= 3) {
+            const code = cols[0].trim();
+            const branch = cols[1].trim();
+            const name = cols[2].trim();
+            const address = cols[3] ? cols[3].trim() : '';
+
+            // 未登録チェック
+            const exists = customers.some(c => c.code === code && c.branch === branch);
+            if (!exists && code && name) {
+              customers.push({ code, branch, name, address });
+              addedCount++;
+            }
+          }
+        });
+        saveCustomers();
+        alert(`CSVの取り込みが完了しました。\n新規自動登録得意先数: ${addedCount}件`);
+      };
+      reader.readAsText(file);
+    });
+
+    // Firebase同期設定の保存と接続
+    document.getElementById('save-firebase-config').addEventListener('click', () => {
+      const configStr = document.getElementById('firebase-config-json').value.trim();
+      try {
+        const config = JSON.parse(configStr);
+        localStorage.setItem('app_firebase_config', JSON.stringify(config));
+        initFirebase(config);
+        alert('Firebase設定を保存し、同期接続を完了しました。');
+      } catch(err) {
+        alert('JSON形式が正しくありません。正しい設定を入力してください。');
+      }
+    });
+
+    function initFirebase(config) {
+      if (!firebase.apps.length) {
+        firebase.initializeApp(config);
+      }
+      db = firebase.firestore();
+      document.getElementById('sync-status').innerText = 'クラウドリアルタイム同期中 (Firebase接続済)';
+      document.getElementById('sync-status').style.color = '#34c759';
+
+      // リアルタイムリスナー設定
+      db.collection('logs').onSnapshot(snapshot => {
+        logs = [];
+        snapshot.forEach(doc => logs.push(doc.data()));
+        localStorage.setItem('app_logs', JSON.stringify(logs));
+        if (document.getElementById('tab-timeline').classList.contains('active')) renderTimeline();
+      });
+
+      db.collection('customers').onSnapshot(snapshot => {
+        if (!snapshot.empty) {
+          const cloudCustomers = [];
+          snapshot.forEach(doc => cloudCustomers.push(doc.data()));
+          customers = cloudCustomers;
+          localStorage.setItem('app_customers', JSON.stringify(customers));
+        }
+      });
+    }
+
+    // 起動時のFirebase自動設定チェック
+    const savedConfig = localStorage.getItem('app_firebase_config');
+    if (savedConfig) {
+      try {
+        initFirebase(JSON.parse(savedConfig));
+      } catch(e) {}
+    }
+  </script>
+</body>
+</html>
