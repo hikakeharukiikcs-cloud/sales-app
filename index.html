@@ -49,6 +49,8 @@
     .customer-list-info { flex: 1; padding-right: 10px; }
     
     .sync-status { font-size: 12px; text-align: center; padding: 6px; color: var(--sub-text); }
+    .filter-row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .filter-row select { flex: 1; }
   </style>
 </head>
 <body>
@@ -68,7 +70,12 @@
             <input type="date" id="visit-date" required>
           </div>
           <div class="form-group">
-            <label>得意先（会社名で検索）</label>
+            <label>得意先絞り込み</label>
+            <div class="filter-row">
+              <select id="input-pref-filter">
+                <option value="">すべての都道府県</option>
+              </select>
+            </div>
             <input type="text" id="customer-search" placeholder="得意先名を入力して絞り込み..." autocomplete="off">
             <input type="hidden" id="selected-customer-name">
             <div id="suggest-box" class="suggest-box"></div>
@@ -92,6 +99,11 @@
       <div class="card">
         <div class="form-group">
           <label>得意先を選択</label>
+          <div class="filter-row">
+            <select id="history-pref-filter">
+              <option value="">すべての都道府県</option>
+            </select>
+          </div>
           <input type="text" id="history-customer-search" placeholder="得意先名で検索..." autocomplete="off">
           <input type="hidden" id="history-customer-name">
           <div id="history-suggest-box" class="suggest-box"></div>
@@ -127,16 +139,15 @@
 
       <div class="card">
         <h3>得意先一覧・編集</h3>
-        <div class="form-group" style="margin-top:10px;">
+        <div class="filter-row" style="margin-top:10px;">
+          <select id="master-pref-filter" onchange="renderCustomerMasterList()">
+            <option value="">すべての都道府県</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-top:6px;">
           <input type="text" id="master-search" placeholder="得意先を一覧から絞り込み..." oninput="renderCustomerMasterList()">
         </div>
         <div id="customer-master-list" style="max-height: 300px; overflow-y: auto;"></div>
-      </div>
-
-      <div class="card">
-        <h3>売上データ (CSV) 取り込み</h3>
-        <p style="font-size: 12px; color: var(--sub-text); margin-bottom: 8px;">未登録の「得意先名」が存在した場合、自動追加されます。</p>
-        <input type="file" id="csv-file" accept=".csv">
       </div>
 
       <div class="card">
@@ -159,6 +170,16 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
   <script>
+    const prefList = [
+      "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+      "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+      "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県",
+      "静岡県", "愛知県", "三重県", "滋賀県", "京都府", "大阪府", "兵庫県",
+      "奈良県", "和歌山県", "鳥取県", "島根県", "岡山県", "広島県", "山口県",
+      "徳島県", "香川県", "愛媛県", "高知県", "福岡県", "佐賀県", "長崎県",
+      "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"
+    ];
+
     const initialCustomerData = [
       { name: "IKCS株式会社東京支社 CF", address: "東京都品川区上大崎3-1--1JR東急目黒ビル15F" },
       { name: "IKCS株式会社東京支社 KF", address: "東京都品川区上大崎3-1--1JR東急目黒ビル15F" },
@@ -574,6 +595,25 @@
 
     document.getElementById('visit-date').value = new Date().toISOString().substring(0, 10);
 
+    // 都道府県プルダウンの初期化
+    function initPrefFilters() {
+      const selects = [
+        document.getElementById('input-pref-filter'),
+        document.getElementById('history-pref-filter'),
+        document.getElementById('master-pref-filter')
+      ];
+      selects.forEach(select => {
+        if (!select) return;
+        prefList.forEach(pref => {
+          const opt = document.createElement('option');
+          opt.value = pref;
+          opt.innerText = pref;
+          select.appendChild(opt);
+        });
+      });
+    }
+    initPrefFilters();
+
     function switchTab(tabName) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
@@ -587,23 +627,30 @@
       if (tabName === 'settings') renderCustomerMasterList();
     }
 
-    function setupIncrementalSearch(inputId, suggestBoxId, hiddenId) {
+    function setupIncrementalSearch(inputId, suggestBoxId, hiddenId, prefFilterId) {
       const input = document.getElementById(inputId);
       const box = document.getElementById(suggestBoxId);
       const hidden = document.getElementById(hiddenId);
+      const prefSelect = document.getElementById(prefFilterId);
 
-      input.addEventListener('input', () => {
+      function filterCustomers() {
         const query = input.value.trim().toLowerCase();
+        const selectedPref = prefSelect ? prefSelect.value : '';
         box.innerHTML = '';
-        if (!query) { box.style.display = 'none'; return; }
+        if (!query && !selectedPref) { box.style.display = 'none'; return; }
 
-        const filtered = customers.filter(c => c.name.toLowerCase().includes(query));
+        const filtered = customers.filter(c => {
+          const matchQuery = !query || c.name.toLowerCase().includes(query);
+          const matchPref = !selectedPref || (c.address && c.address.startsWith(selectedPref));
+          return matchQuery && matchPref;
+        });
+
         if (filtered.length === 0) { box.style.display = 'none'; return; }
 
         filtered.forEach(c => {
           const div = document.createElement('div');
           div.className = 'suggest-item';
-          div.innerText = c.name;
+          div.innerText = c.name + (c.address ? ` (${c.address})` : '');
           div.onclick = () => {
             input.value = c.name;
             hidden.value = c.name;
@@ -613,15 +660,19 @@
           box.appendChild(div);
         });
         box.style.display = 'block';
-      });
+      }
+
+      input.addEventListener('input', filterCustomers);
+      input.addEventListener('focus', filterCustomers);
+      if (prefSelect) prefSelect.addEventListener('change', filterCustomers);
 
       document.addEventListener('click', (e) => {
-        if (e.target !== input) box.style.display = 'none';
+        if (e.target !== input && e.target !== prefSelect) box.style.display = 'none';
       });
     }
 
-    setupIncrementalSearch('customer-search', 'suggest-box', 'selected-customer-name');
-    setupIncrementalSearch('history-customer-search', 'history-suggest-box', 'history-customer-name');
+    setupIncrementalSearch('customer-search', 'suggest-box', 'selected-customer-name', 'input-pref-filter');
+    setupIncrementalSearch('history-customer-search', 'history-suggest-box', 'history-customer-name', 'history-pref-filter');
 
     document.getElementById('diary-form').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -775,7 +826,7 @@
       }
     }
 
-    // 得意先マスター管理（追加・編集・一覧表示）
+    // 得意先マスター管理
     document.getElementById('master-form').addEventListener('submit', (e) => {
       e.preventDefault();
       const name = document.getElementById('m-name').value.trim();
@@ -785,18 +836,15 @@
       if (!name) return;
 
       if (origName) {
-        // 編集保存
         const index = customers.findIndex(c => c.name === origName);
         if (index !== -1) {
           customers[index] = { name, address };
-          // ログ側の得意先名も連動更新
           logs.forEach(l => { if (l.customerName === origName) l.customerName = name; });
           saveLogs();
         }
         if (db) db.collection('customers').doc(origName.replace(/\//g, '_')).delete();
         alert('得意先情報を更新しました。');
       } else {
-        // 新規追加
         if (!customers.some(c => c.name === name)) {
           customers.push({ name, address });
           alert('得意先を追加しました。');
@@ -814,9 +862,14 @@
     function renderCustomerMasterList() {
       const container = document.getElementById('customer-master-list');
       const query = (document.getElementById('master-search').value || '').toLowerCase();
+      const selectedPref = document.getElementById('master-pref-filter').value;
       container.innerHTML = '';
 
-      const filtered = customers.filter(c => c.name.toLowerCase().includes(query) || (c.address && c.address.toLowerCase().includes(query)));
+      const filtered = customers.filter(c => {
+        const matchQuery = !query || c.name.toLowerCase().includes(query) || (c.address && c.address.toLowerCase().includes(query));
+        const matchPref = !selectedPref || (c.address && c.address.startsWith(selectedPref));
+        return matchQuery && matchPref;
+      });
 
       filtered.forEach(c => {
         const div = document.createElement('div');
@@ -868,32 +921,6 @@
         renderCustomerMasterList();
       }
     }
-
-    document.getElementById('csv-file').addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = function(evt) {
-        const lines = evt.target.result.split('\n');
-        let addedCount = 0;
-        lines.forEach((line, idx) => {
-          if (idx === 0 || !line.trim()) return;
-          const cols = line.split(',');
-          const name = cols[0] ? cols[0].trim() : '';
-          const address = cols[1] ? cols[1].trim() : '';
-
-          if (name && !customers.some(c => c.name === name)) {
-            customers.push({ name, address });
-            addedCount++;
-          }
-        });
-        saveCustomers();
-        renderCustomerMasterList();
-        alert(`CSVの取り込みが完了しました。\n新規追加得意先数: ${addedCount}件`);
-      };
-      reader.readAsText(file);
-    });
 
     document.getElementById('save-firebase-config').addEventListener('click', () => {
       const configStr = document.getElementById('firebase-config-json').value.trim();
